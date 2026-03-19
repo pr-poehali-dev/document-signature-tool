@@ -115,6 +115,68 @@ def pdf_to_docx(file_bytes: bytes) -> bytes:
     return buf.getvalue()
 
 
+def xlsx_to_pdf(file_bytes: bytes) -> bytes:
+    """XLSX → PDF: выгружаем строки таблицы в PDF с поддержкой кириллицы"""
+    import openpyxl
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units import cm
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
+    from reportlab.lib import colors
+
+    font_path = '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'
+    if os.path.exists(font_path):
+        pdfmetrics.registerFont(TTFont('DejaVu', font_path))
+        font_name = 'DejaVu'
+    else:
+        font_name = 'Helvetica'
+
+    wb = openpyxl.load_workbook(io.BytesIO(file_bytes), data_only=True)
+    buf = io.BytesIO()
+    styles = getSampleStyleSheet()
+    cell_style = ParagraphStyle('Cell', fontName=font_name, fontSize=9, leading=12)
+    header_style = ParagraphStyle('Header', fontName=font_name, fontSize=9, leading=12, textColor=colors.white)
+
+    story = []
+    for sheet in wb.worksheets:
+        title_style = ParagraphStyle('Title', fontName=font_name, fontSize=13, leading=18, spaceAfter=8)
+        story.append(Paragraph(sheet.title, title_style))
+        rows = list(sheet.iter_rows(values_only=True))
+        if not rows:
+            continue
+        max_cols = max(len(r) for r in rows)
+        table_data = []
+        for i, row in enumerate(rows[:200]):
+            cells = []
+            for val in row:
+                text = '' if val is None else str(val)
+                s = header_style if i == 0 else cell_style
+                cells.append(Paragraph(text, s))
+            # pad short rows
+            while len(cells) < max_cols:
+                cells.append(Paragraph('', cell_style))
+            table_data.append(cells)
+
+        col_width = (landscape(A4)[0] - 4 * cm) / max(max_cols, 1)
+        col_widths = [col_width] * max_cols
+        t = Table(table_data, colWidths=col_widths, repeatRows=1)
+        t.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1a1a2e')),
+            ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f5f5f5')]),
+        ]))
+        story.append(t)
+        story.append(Spacer(1, 0.5 * cm))
+
+    pdf = SimpleDocTemplate(buf, pagesize=landscape(A4), rightMargin=2 * cm, leftMargin=2 * cm,
+                            topMargin=2 * cm, bottomMargin=2 * cm)
+    pdf.build(story)
+    return buf.getvalue()
+
+
 def pdf_to_xlsx(file_bytes: bytes) -> bytes:
     """PDF → XLSX: таблица со строками текста из PDF"""
     import openpyxl
@@ -350,6 +412,12 @@ def handler(event: dict, context) -> dict:
             result_mime = 'application/pdf'
             result_ext = 'pdf'
 
+        # XLSX → PDF
+        elif from_fmt == 'XLSX' and to_fmt == 'PDF':
+            result_bytes = xlsx_to_pdf(file_bytes)
+            result_mime = 'application/pdf'
+            result_ext = 'pdf'
+
         # Сжатие изображения
         elif from_fmt in IMAGE_FMTS and to_fmt in ('COMPRESS', from_fmt):
             result_bytes = compress_image(file_bytes, quality)
@@ -375,10 +443,14 @@ def handler(event: dict, context) -> dict:
                 schema = os.environ.get('MAIN_DB_SCHEMA', 'public')
                 user = get_user_from_token(cur, token, schema)
                 if user:
+                    uid = user[0]
+                    doc_name = f'{base_name}.{result_ext}'.replace("'", "''")
+                    safe_to_fmt = to_fmt.replace("'", "''")
+                    safe_s3_key = s3_key.replace("'", "''")
+                    result_size = len(result_bytes)
                     cur.execute(
                         f'INSERT INTO "{schema}".documents (user_id, name, file_type, file_size, s3_key, action, status) '
-                        f'VALUES (%s, %s, %s, %s, %s, %s, %s)',
-                        (user[0], f'{base_name}.{result_ext}', to_fmt, len(result_bytes), s3_key, 'converted', 'signed')
+                        f"VALUES ({uid}, '{doc_name}', '{safe_to_fmt}', {result_size}, '{safe_s3_key}', 'converted', 'signed')"
                     )
                     conn.commit()
                 cur.close()
