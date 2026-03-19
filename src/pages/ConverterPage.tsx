@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import Icon from "@/components/ui/icon";
 
 type ConvertCategory = "documents" | "images" | "compress";
@@ -41,17 +41,54 @@ interface ActiveConversion {
 export default function ConverterPage() {
   const [category, setCategory] = useState<ConvertCategory>("documents");
   const [active, setActive] = useState<ActiveConversion | null>(null);
-  const [targetFormat, setTargetFormat] = useState("");
+  const [_targetFormat, setTargetFormat] = useState("");
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const [converting, setConverting] = useState(false);
   const [done, setDone] = useState(false);
   const [quality, setQuality] = useState(90);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [showPreview, setShowPreview] = useState(false);
+  const [resultSize, setResultSize] = useState("");
+  const _downloadRef = useRef<HTMLAnchorElement>(null);
+
+  const isImageFormat = (fmt: string) => ["PNG", "JPG", "WEBP", "BMP", "TIFF", "SVG"].includes(fmt.toUpperCase());
 
   const handleConvert = () => {
-    if (!uploadedFile && !active) return;
+    if (!uploadedFile || !active) return;
     setConverting(true);
     setDone(false);
-    setTimeout(() => { setConverting(false); setDone(true); }, 2200);
+    setPreviewUrl(null);
+
+    setTimeout(() => {
+      setConverting(false);
+      setDone(true);
+
+      // Симуляция размера после конвертации
+      const origKB = uploadedFile.size / 1024;
+      const factor = category === "compress" ? (quality / 100) * 0.6 : 0.95;
+      const newKB = origKB * factor;
+      setResultSize(newKB > 1024 ? `${(newKB / 1024).toFixed(1)} MB` : `${newKB.toFixed(0)} KB`);
+
+      // Для изображений — показываем превью оригинала (в реальности был бы конвертированный)
+      if (uploadedFile.type.startsWith("image/") && isImageFormat(active.to)) {
+        const url = URL.createObjectURL(uploadedFile);
+        setPreviewUrl(url);
+      }
+    }, 2000);
+  };
+
+  const handleDownload = () => {
+    if (!uploadedFile || !active) return;
+    // Скачиваем исходный файл с новым именем (в реальности — конвертированный)
+    const url = URL.createObjectURL(uploadedFile);
+    const a = document.createElement("a");
+    const baseName = uploadedFile.name.replace(/\.[^.]+$/, "");
+    a.href = url;
+    a.download = `${baseName}_converted.${active.to.toLowerCase()}`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
 
   const handleSelectConversion = (from: string, to: string) => {
@@ -59,6 +96,8 @@ export default function ConverterPage() {
     setTargetFormat(to);
     setUploadedFile(null);
     setDone(false);
+    setPreviewUrl(null);
+    setShowPreview(false);
   };
 
   return (
@@ -191,21 +230,145 @@ export default function ConverterPage() {
               </div>
 
               {done ? (
-                <div className="text-center p-6 rounded-xl animate-scale-in" style={{ background: 'rgba(74,222,128,0.06)', border: '1px solid rgba(74,222,128,0.2)' }}>
-                  <Icon name="CheckCircle" size={36} className="mx-auto mb-3 text-green-400" />
-                  <div className="font-montserrat font-700 text-white mb-1">Готово!</div>
-                  <div className="text-sm mb-4" style={{ color: '#7A90A8' }}>
-                    Файл конвертирован из {active.from} в {active.to}
-                    {category !== "documents" && ` (качество ${quality}%)`}
+                <div className="animate-scale-in space-y-3">
+                  {/* Result card */}
+                  <div className="rounded-xl p-5" style={{ background: 'rgba(74,222,128,0.06)', border: '1px solid rgba(74,222,128,0.25)' }}>
+                    <div className="flex items-center gap-4 mb-4">
+                      <div className="w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: 'rgba(74,222,128,0.15)' }}>
+                        <Icon name="CheckCircle" size={26} className="text-green-400" />
+                      </div>
+                      <div className="flex-1">
+                        <div className="font-montserrat font-700 text-white mb-0.5">Конвертация завершена!</div>
+                        <div className="text-xs" style={{ color: '#7A90A8' }}>
+                          {uploadedFile?.name.replace(/\.[^.]+$/, "")}.{active.to.toLowerCase()} · {resultSize}
+                          {category !== "documents" && ` · качество ${quality}%`}
+                        </div>
+                      </div>
+                      <div className="text-xs px-2 py-1 rounded" style={{ background: 'rgba(74,158,255,0.1)', color: '#4A9EFF', fontFamily: 'monospace' }}>
+                        {active.from} → {active.to}
+                      </div>
+                    </div>
+
+                    {/* Сравнение размеров */}
+                    <div className="grid grid-cols-3 gap-3 mb-4 p-3 rounded-lg" style={{ background: 'rgba(0,0,0,0.2)' }}>
+                      <div className="text-center">
+                        <div className="text-xs mb-1" style={{ color: '#7A90A8' }}>Исходный</div>
+                        <div className="font-mono-ibm text-sm font-bold text-white">
+                          {uploadedFile ? (uploadedFile.size > 1048576 ? `${(uploadedFile.size/1048576).toFixed(1)} MB` : `${(uploadedFile.size/1024).toFixed(0)} KB`) : "—"}
+                        </div>
+                        <div className="text-xs mt-0.5" style={{ color: '#7A90A8' }}>{active.from}</div>
+                      </div>
+                      <div className="flex items-center justify-center">
+                        <Icon name="ArrowRight" size={18} style={{ color: '#C9A84C' }} />
+                      </div>
+                      <div className="text-center">
+                        <div className="text-xs mb-1" style={{ color: '#7A90A8' }}>Результат</div>
+                        <div className="font-mono-ibm text-sm font-bold text-green-400">{resultSize}</div>
+                        <div className="text-xs mt-0.5" style={{ color: '#7A90A8' }}>{active.to}</div>
+                      </div>
+                    </div>
+
+                    {/* Кнопки */}
+                    <div className="flex gap-3">
+                      <button
+                        onClick={handleDownload}
+                        className="btn-gold flex-1 py-2.5 rounded-lg text-sm font-semibold flex items-center justify-center gap-2 shine-effect"
+                      >
+                        <Icon name="Download" size={16} />
+                        Скачать {active.to}
+                      </button>
+                      {previewUrl && (
+                        <button
+                          onClick={() => setShowPreview(!showPreview)}
+                          className="px-4 py-2.5 rounded-lg text-sm font-medium flex items-center gap-2 transition-all"
+                          style={showPreview
+                            ? { background: 'rgba(201,168,76,0.15)', color: '#C9A84C', border: '1px solid rgba(201,168,76,0.3)' }
+                            : { background: 'rgba(17,32,64,0.8)', color: '#7A90A8', border: '1px solid rgba(255,255,255,0.1)' }}
+                        >
+                          <Icon name={showPreview ? "EyeOff" : "Eye"} size={15} />
+                          {showPreview ? "Скрыть" : "Просмотр"}
+                        </button>
+                      )}
+                      <button
+                        onClick={() => { setUploadedFile(null); setDone(false); setPreviewUrl(null); setShowPreview(false); }}
+                        className="px-4 py-2.5 rounded-lg text-sm text-slate-400 hover:text-white transition-colors border"
+                        style={{ borderColor: 'rgba(255,255,255,0.1)' }}
+                      >
+                        Ещё файл
+                      </button>
+                    </div>
                   </div>
-                  <div className="flex gap-3 justify-center">
-                    <button className="btn-gold px-6 py-2.5 rounded-lg text-sm font-semibold flex items-center gap-2">
-                      <Icon name="Download" size={16} /> Скачать {active.to}
+
+                  {/* Preview panel */}
+                  {showPreview && previewUrl && (
+                    <div className="rounded-xl overflow-hidden animate-fade-in" style={{ border: '1px solid rgba(201,168,76,0.2)' }}>
+                      <div className="flex items-center justify-between px-4 py-2.5" style={{ background: 'rgba(17,32,64,0.9)', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                        <div className="flex items-center gap-2 text-sm text-slate-300">
+                          <Icon name="Eye" size={14} style={{ color: '#C9A84C' }} />
+                          Предпросмотр файла
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <span className="text-xs font-mono-ibm px-2 py-0.5 rounded" style={{ background: 'rgba(74,158,255,0.1)', color: '#4A9EFF' }}>{active.to}</span>
+                          <button onClick={() => setShowPreview(false)} className="text-slate-500 hover:text-white transition-colors">
+                            <Icon name="X" size={15} />
+                          </button>
+                        </div>
+                      </div>
+                      <div className="flex items-center justify-center p-4" style={{ background: 'rgba(10,22,40,0.6)', minHeight: '220px' }}>
+                        <img
+                          src={previewUrl}
+                          alt="Предпросмотр"
+                          className="max-w-full max-h-64 rounded-lg object-contain"
+                          style={{ boxShadow: '0 4px 24px rgba(0,0,0,0.4)' }}
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Для не-изображений — заглушка просмотра */}
+                  {!previewUrl && !showPreview && (
+                    <button
+                      onClick={() => setShowPreview(true)}
+                      className="w-full py-3 rounded-xl text-sm text-slate-400 hover:text-white flex items-center justify-center gap-2 transition-all"
+                      style={{ background: 'rgba(17,32,64,0.5)', border: '1px dashed rgba(255,255,255,0.08)' }}
+                    >
+                      <Icon name="FileSearch" size={15} />
+                      Просмотр файла
                     </button>
-                    <button onClick={() => { setUploadedFile(null); setDone(false); }} className="px-4 py-2.5 rounded-lg text-sm text-slate-300 border" style={{ borderColor: 'rgba(255,255,255,0.1)' }}>
-                      Ещё файл
-                    </button>
-                  </div>
+                  )}
+
+                  {/* Документ просмотр (не изображение) */}
+                  {!previewUrl && showPreview && (
+                    <div className="rounded-xl overflow-hidden animate-fade-in" style={{ border: '1px solid rgba(201,168,76,0.2)' }}>
+                      <div className="flex items-center justify-between px-4 py-2.5" style={{ background: 'rgba(17,32,64,0.9)', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                        <div className="flex items-center gap-2 text-sm text-slate-300">
+                          <Icon name="FileText" size={14} style={{ color: '#C9A84C' }} />
+                          {uploadedFile?.name.replace(/\.[^.]+$/, "")}.{active.to.toLowerCase()}
+                        </div>
+                        <button onClick={() => setShowPreview(false)} className="text-slate-500 hover:text-white transition-colors">
+                          <Icon name="X" size={15} />
+                        </button>
+                      </div>
+                      <div className="p-6" style={{ background: '#f5f5f0', minHeight: '200px' }}>
+                        <div className="max-w-lg mx-auto space-y-2.5">
+                          <div className="text-center font-bold text-base mb-4" style={{ color: '#1a1a2e', fontFamily: 'Montserrat' }}>
+                            {uploadedFile?.name.replace(/\.[^.]+$/, "")}
+                          </div>
+                          {[100, 90, 95, 70, 85, 60, 92, 75].map((w, i) => (
+                            <div key={i} className="h-2.5 rounded" style={{ background: '#c8c8c0', width: `${w}%` }} />
+                          ))}
+                          <div className="mt-4 pt-4 border-t border-gray-300">
+                            {[80, 65, 88, 55].map((w, i) => (
+                              <div key={i} className="h-2.5 rounded mb-2" style={{ background: '#c8c8c0', width: `${w}%` }} />
+                            ))}
+                          </div>
+                          <div className="text-right text-xs mt-4" style={{ color: '#888' }}>
+                            Конвертировано: {new Date().toLocaleString('ru-RU')}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
               ) : (
                 <button

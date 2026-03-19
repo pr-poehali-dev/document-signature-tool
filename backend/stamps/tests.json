@@ -1,0 +1,12 @@
+{
+  "tests": [
+    {
+      "name": "Get stamps library",
+      "method": "GET",
+      "path": "/",
+      "expectedStatus": 200,
+      "expectedBody": {"library": []},
+      "bodyMatcher": "partial"
+    }
+  ]
+}
