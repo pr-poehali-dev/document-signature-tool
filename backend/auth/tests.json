@@ -6,6 +6,15 @@
       "path": "/",
       "expectedStatus": 404,
       "bodyMatcher": "partial"
+    },
+    {
+      "name": "Login admin",
+      "method": "POST",
+      "path": "/?action=login",
+      "body": {"email": "admin@dokusign.ru", "password": "admin123"},
+      "expectedStatus": 200,
+      "expectedBody": {"token": "string"},
+      "bodyMatcher": "partial"
     }
   ]
 }

@@ -50,7 +50,7 @@ export interface User {
 
 export const authApi = {
   async register(name: string, email: string, password: string, company?: string): Promise<{ token: string; user: User }> {
-    const data = await apiFetch(`${AUTH_URL}/register`, {
+    const data = await apiFetch(`${AUTH_URL}/?action=register`, {
       method: 'POST',
       body: JSON.stringify({ name, email, password, company }),
     });
@@ -59,7 +59,7 @@ export const authApi = {
   },
 
   async login(email: string, password: string): Promise<{ token: string; user: User }> {
-    const data = await apiFetch(`${AUTH_URL}/login`, {
+    const data = await apiFetch(`${AUTH_URL}/?action=login`, {
       method: 'POST',
       body: JSON.stringify({ email, password }),
     });
@@ -70,7 +70,7 @@ export const authApi = {
   async me(): Promise<User | null> {
     if (!getToken()) return null;
     try {
-      const data = await apiFetch(`${AUTH_URL}/me`);
+      const data = await apiFetch(`${AUTH_URL}/?action=me`);
       return data.user;
     } catch {
       clearToken();
@@ -79,16 +79,16 @@ export const authApi = {
   },
 
   async logout() {
-    try { await apiFetch(`${AUTH_URL}/logout`, { method: 'POST' }); } catch { /* ignore */ }
+    try { await apiFetch(`${AUTH_URL}/?action=logout`, { method: 'POST' }); } catch { /* ignore */ }
     clearToken();
   },
 
   async updateProfile(data: Partial<User>) {
-    return apiFetch(`${AUTH_URL}/me`, { method: 'PUT', body: JSON.stringify(data) });
+    return apiFetch(`${AUTH_URL}/?action=update_profile`, { method: 'POST', body: JSON.stringify(data) });
   },
 
   async changePassword(old_password: string, new_password: string) {
-    return apiFetch(`${AUTH_URL}/password`, { method: 'PUT', body: JSON.stringify({ old_password, new_password }) });
+    return apiFetch(`${AUTH_URL}/?action=change_password`, { method: 'POST', body: JSON.stringify({ old_password, new_password }) });
   },
 };
 

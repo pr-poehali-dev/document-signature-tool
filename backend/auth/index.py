@@ -1,5 +1,6 @@
 """
 Аутентификация пользователей: регистрация, вход, выход, проверка сессии.
+Роутинг через query param: ?action=login|register|me|logout|update_profile|change_password
 """
 import json
 import os
@@ -28,7 +29,7 @@ def handler(event: dict, context) -> dict:
     if event.get('httpMethod') == 'OPTIONS':
         return {'statusCode': 200, 'headers': headers, 'body': ''}
 
-    path = event.get('path', '/')
+    action = (event.get('queryStringParameters') or {}).get('action', '')
     method = event.get('httpMethod', 'GET')
     body = {}
     if event.get('body'):
@@ -39,8 +40,7 @@ def handler(event: dict, context) -> dict:
     schema = os.environ.get('MAIN_DB_SCHEMA', 'public')
 
     try:
-        # POST /register
-        if method == 'POST' and path.endswith('/register'):
+        if action == 'register':
             name = body.get('name', '').strip()
             email = body.get('email', '').strip().lower()
             password = body.get('password', '')
@@ -72,8 +72,7 @@ def handler(event: dict, context) -> dict:
                 'body': json.dumps({'token': token, 'user': {'id': user[0], 'name': user[1], 'email': user[2], 'role': user[3]}})
             }
 
-        # POST /login
-        if method == 'POST' and path.endswith('/login'):
+        if action == 'login':
             email = body.get('email', '').strip().lower()
             password = body.get('password', '')
             password_hash = hash_password(password)
@@ -94,8 +93,7 @@ def handler(event: dict, context) -> dict:
                 'body': json.dumps({'token': token, 'user': {'id': user[0], 'name': user[1], 'email': user[2], 'role': user[3]}})
             }
 
-        # GET /me — проверка токена
-        if method == 'GET' and path.endswith('/me'):
+        if action == 'me':
             token = event.get('headers', {}).get('X-Auth-Token') or event.get('headers', {}).get('x-auth-token')
             if not token:
                 return {'statusCode': 401, 'headers': headers, 'body': json.dumps({'error': 'Токен не передан'})}
@@ -114,8 +112,7 @@ def handler(event: dict, context) -> dict:
                 'body': json.dumps({'user': {'id': row[0], 'name': row[1], 'email': row[2], 'role': row[3], 'company': row[4], 'phone': row[5], 'position': row[6]}})
             }
 
-        # PUT /me — обновление профиля
-        if method == 'PUT' and path.endswith('/me'):
+        if action == 'update_profile':
             token = event.get('headers', {}).get('X-Auth-Token') or event.get('headers', {}).get('x-auth-token')
             cur.execute(f'SELECT user_id FROM {schema}.sessions WHERE token = %s AND expires_at > NOW()', (token,))
             row = cur.fetchone()
@@ -133,15 +130,30 @@ def handler(event: dict, context) -> dict:
             conn.commit()
             return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'ok': True})}
 
-        # POST /logout
-        if method == 'POST' and path.endswith('/logout'):
+        if action == 'change_password':
+            token = event.get('headers', {}).get('X-Auth-Token') or event.get('headers', {}).get('x-auth-token')
+            cur.execute(f'SELECT user_id FROM {schema}.sessions WHERE token = %s AND expires_at > NOW()', (token,))
+            row = cur.fetchone()
+            if not row:
+                return {'statusCode': 401, 'headers': headers, 'body': json.dumps({'error': 'Не авторизован'})}
+            user_id = row[0]
+            old_password = body.get('old_password', '')
+            new_password = body.get('new_password', '')
+            cur.execute(f'SELECT id FROM {schema}.users WHERE id = %s AND password_hash = %s', (user_id, hash_password(old_password)))
+            if not cur.fetchone():
+                return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Неверный текущий пароль'})}
+            cur.execute(f'UPDATE {schema}.users SET password_hash = %s WHERE id = %s', (hash_password(new_password), user_id))
+            conn.commit()
+            return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'ok': True})}
+
+        if action == 'logout':
             token = event.get('headers', {}).get('X-Auth-Token') or event.get('headers', {}).get('x-auth-token')
             if token:
                 cur.execute(f'UPDATE {schema}.sessions SET expires_at = NOW() WHERE token = %s', (token,))
                 conn.commit()
             return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'ok': True})}
 
-        return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Not found'})}
+        return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Unknown action'})}
 
     finally:
         cur.close()
