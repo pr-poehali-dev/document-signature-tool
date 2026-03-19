@@ -297,6 +297,243 @@ def text_to_pdf(text: str) -> bytes:
     return buf.getvalue()
 
 
+def csv_to_xlsx(file_bytes: bytes) -> bytes:
+    """CSV → XLSX"""
+    import csv
+    import openpyxl
+    text = file_bytes.decode('utf-8-sig', errors='replace')
+    reader = csv.reader(io.StringIO(text))
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = 'Sheet1'
+    for row in reader:
+        ws.append(row)
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def xlsx_to_csv(file_bytes: bytes) -> bytes:
+    """XLSX → CSV (первый лист)"""
+    import csv
+    import openpyxl
+    wb = openpyxl.load_workbook(io.BytesIO(file_bytes), data_only=True)
+    ws = wb.active
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    for row in ws.iter_rows(values_only=True):
+        writer.writerow(['' if v is None else str(v) for v in row])
+    return buf.getvalue().encode('utf-8-sig')
+
+
+def csv_to_txt(file_bytes: bytes) -> bytes:
+    """CSV → TXT (tab-separated)"""
+    import csv
+    text = file_bytes.decode('utf-8-sig', errors='replace')
+    reader = csv.reader(io.StringIO(text))
+    lines = ['\t'.join(row) for row in reader]
+    return '\n'.join(lines).encode('utf-8')
+
+
+def txt_to_csv(file_bytes: bytes) -> bytes:
+    """TXT → CSV (tab-separated → comma-separated)"""
+    import csv
+    text = file_bytes.decode('utf-8', errors='replace')
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    for line in text.split('\n'):
+        parts = line.split('\t') if '\t' in line else [line]
+        writer.writerow(parts)
+    return buf.getvalue().encode('utf-8-sig')
+
+
+def csv_to_pdf(file_bytes: bytes) -> bytes:
+    """CSV → PDF таблица"""
+    import csv
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units import cm
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
+    from reportlab.lib import colors
+
+    font_path = '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'
+    if os.path.exists(font_path):
+        pdfmetrics.registerFont(TTFont('DejaVu', font_path))
+        font_name = 'DejaVu'
+    else:
+        font_name = 'Helvetica'
+
+    text = file_bytes.decode('utf-8-sig', errors='replace')
+    rows = list(csv.reader(io.StringIO(text)))
+    if not rows:
+        rows = [['Нет данных']]
+
+    cell_style = ParagraphStyle('Cell', fontName=font_name, fontSize=9, leading=12)
+    header_style = ParagraphStyle('Header', fontName=font_name, fontSize=9, leading=12, textColor=colors.white)
+
+    max_cols = max(len(r) for r in rows)
+    table_data = []
+    for i, row in enumerate(rows[:300]):
+        while len(row) < max_cols:
+            row.append('')
+        s = header_style if i == 0 else cell_style
+        table_data.append([Paragraph(str(v), s) for v in row])
+
+    col_width = (landscape(A4)[0] - 4 * cm) / max(max_cols, 1)
+    t = Table(table_data, colWidths=[col_width] * max_cols, repeatRows=1)
+    t.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1a1a2e')),
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f5f5f5')]),
+    ]))
+
+    buf = io.BytesIO()
+    pdf = SimpleDocTemplate(buf, pagesize=landscape(A4), rightMargin=2*cm, leftMargin=2*cm,
+                            topMargin=2*cm, bottomMargin=2*cm)
+    pdf.build([t])
+    return buf.getvalue()
+
+
+def xlsx_to_docx(file_bytes: bytes) -> bytes:
+    """XLSX → DOCX: каждый лист как таблица"""
+    import openpyxl
+    from docx import Document
+    from docx.shared import Pt, RGBColor
+    from docx.oxml.ns import qn
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+
+    wb = openpyxl.load_workbook(io.BytesIO(file_bytes), data_only=True)
+    doc = Document()
+
+    for sheet in wb.worksheets:
+        doc.add_heading(sheet.title, level=1)
+        rows = list(sheet.iter_rows(values_only=True))
+        if not rows:
+            continue
+        max_cols = max(len(r) for r in rows)
+        table = doc.add_table(rows=len(rows), cols=max_cols)
+        table.style = 'Table Grid'
+        for i, row in enumerate(rows):
+            for j, val in enumerate(row):
+                cell = table.cell(i, j)
+                cell.text = '' if val is None else str(val)
+                if i == 0:
+                    for run in cell.paragraphs[0].runs:
+                        run.bold = True
+        doc.add_paragraph()
+
+    buf = io.BytesIO()
+    doc.save(buf)
+    return buf.getvalue()
+
+
+def docx_to_xlsx(file_bytes: bytes) -> bytes:
+    """DOCX → XLSX: каждый параграф как строка; таблицы DOCX → листы XLSX"""
+    import openpyxl
+    from docx import Document
+
+    doc = Document(io.BytesIO(file_bytes))
+    wb = openpyxl.Workbook()
+
+    # Параграфы → первый лист
+    ws = wb.active
+    ws.title = 'Текст'
+    ws.append(['#', 'Содержимое'])
+    row_num = 1
+    for para in doc.paragraphs:
+        if para.text.strip():
+            ws.append([row_num, para.text.strip()])
+            row_num += 1
+
+    # Таблицы DOCX → отдельные листы
+    for t_idx, table in enumerate(doc.tables):
+        ws2 = wb.create_sheet(title=f'Таблица {t_idx + 1}')
+        for row in table.rows:
+            ws2.append([cell.text for cell in row.cells])
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def xlsx_to_txt(file_bytes: bytes) -> bytes:
+    """XLSX → TXT (tab-separated)"""
+    import openpyxl
+    wb = openpyxl.load_workbook(io.BytesIO(file_bytes), data_only=True)
+    lines = []
+    for sheet in wb.worksheets:
+        lines.append(f'=== {sheet.title} ===')
+        for row in sheet.iter_rows(values_only=True):
+            lines.append('\t'.join('' if v is None else str(v) for v in row))
+        lines.append('')
+    return '\n'.join(lines).encode('utf-8')
+
+
+def txt_to_xlsx(file_bytes: bytes) -> bytes:
+    """TXT → XLSX (tab-separated строки)"""
+    import openpyxl
+    text = file_bytes.decode('utf-8', errors='replace')
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = 'Sheet1'
+    for line in text.split('\n'):
+        parts = line.split('\t') if '\t' in line else [line]
+        ws.append(parts)
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def docx_to_csv(file_bytes: bytes) -> bytes:
+    """DOCX → CSV: параграфы и таблицы"""
+    import csv
+    from docx import Document
+
+    doc = Document(io.BytesIO(file_bytes))
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(['Тип', 'Содержимое'])
+    for para in doc.paragraphs:
+        if para.text.strip():
+            writer.writerow(['параграф', para.text.strip()])
+    for table in doc.tables:
+        for row in table.rows:
+            writer.writerow(['таблица'] + [cell.text for cell in row.cells])
+    return buf.getvalue().encode('utf-8-sig')
+
+
+def csv_to_docx(file_bytes: bytes) -> bytes:
+    """CSV → DOCX таблица"""
+    import csv
+    from docx import Document
+
+    text = file_bytes.decode('utf-8-sig', errors='replace')
+    rows = list(csv.reader(io.StringIO(text)))
+    if not rows:
+        return txt_to_docx('')
+
+    doc = Document()
+    doc.add_heading('Данные из CSV', level=1)
+    max_cols = max(len(r) for r in rows)
+    table = doc.add_table(rows=len(rows), cols=max_cols)
+    table.style = 'Table Grid'
+    for i, row in enumerate(rows):
+        while len(row) < max_cols:
+            row.append('')
+        for j, val in enumerate(row):
+            cell = table.cell(i, j)
+            cell.text = val
+            if i == 0:
+                for run in cell.paragraphs[0].runs:
+                    run.bold = True
+    buf = io.BytesIO()
+    doc.save(buf)
+    return buf.getvalue()
+
+
 def compress_image(file_bytes: bytes, quality: int = 75) -> bytes:
     from PIL import Image
     img = Image.open(io.BytesIO(file_bytes))
@@ -417,6 +654,72 @@ def handler(event: dict, context) -> dict:
             result_bytes = xlsx_to_pdf(file_bytes)
             result_mime = 'application/pdf'
             result_ext = 'pdf'
+
+        # CSV → XLSX
+        elif from_fmt == 'CSV' and to_fmt == 'XLSX':
+            result_bytes = csv_to_xlsx(file_bytes)
+            result_mime = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+            result_ext = 'xlsx'
+
+        # XLSX → CSV
+        elif from_fmt == 'XLSX' and to_fmt == 'CSV':
+            result_bytes = xlsx_to_csv(file_bytes)
+            result_mime = 'text/csv'
+            result_ext = 'csv'
+
+        # CSV → PDF
+        elif from_fmt == 'CSV' and to_fmt == 'PDF':
+            result_bytes = csv_to_pdf(file_bytes)
+            result_mime = 'application/pdf'
+            result_ext = 'pdf'
+
+        # CSV → TXT
+        elif from_fmt == 'CSV' and to_fmt == 'TXT':
+            result_bytes = csv_to_txt(file_bytes)
+            result_mime = 'text/plain'
+            result_ext = 'txt'
+
+        # TXT → CSV
+        elif from_fmt == 'TXT' and to_fmt == 'CSV':
+            result_bytes = txt_to_csv(file_bytes)
+            result_mime = 'text/csv'
+            result_ext = 'csv'
+
+        # CSV → DOCX
+        elif from_fmt == 'CSV' and to_fmt == 'DOCX':
+            result_bytes = csv_to_docx(file_bytes)
+            result_mime = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+            result_ext = 'docx'
+
+        # DOCX → CSV
+        elif from_fmt == 'DOCX' and to_fmt == 'CSV':
+            result_bytes = docx_to_csv(file_bytes)
+            result_mime = 'text/csv'
+            result_ext = 'csv'
+
+        # XLSX → DOCX
+        elif from_fmt == 'XLSX' and to_fmt == 'DOCX':
+            result_bytes = xlsx_to_docx(file_bytes)
+            result_mime = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+            result_ext = 'docx'
+
+        # DOCX → XLSX
+        elif from_fmt == 'DOCX' and to_fmt == 'XLSX':
+            result_bytes = docx_to_xlsx(file_bytes)
+            result_mime = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+            result_ext = 'xlsx'
+
+        # XLSX → TXT
+        elif from_fmt == 'XLSX' and to_fmt == 'TXT':
+            result_bytes = xlsx_to_txt(file_bytes)
+            result_mime = 'text/plain'
+            result_ext = 'txt'
+
+        # TXT → XLSX
+        elif from_fmt == 'TXT' and to_fmt == 'XLSX':
+            result_bytes = txt_to_xlsx(file_bytes)
+            result_mime = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+            result_ext = 'xlsx'
 
         # Сжатие изображения
         elif from_fmt in IMAGE_FMTS and to_fmt in ('COMPRESS', from_fmt):
