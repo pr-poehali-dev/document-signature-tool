@@ -40,11 +40,11 @@ def cdn_url(key: str) -> str:
 def get_user_from_token(cur, token: str, schema: str):
     if not token:
         return None
+    safe_token = token.replace("'", "''")
     cur.execute(
         f'SELECT u.id, u.name, u.role FROM "{schema}".sessions s '
         f'JOIN "{schema}".users u ON s.user_id = u.id '
-        f'WHERE s.token = %s AND s.expires_at > NOW()',
-        (token,)
+        f"WHERE s.token = '{safe_token}' AND s.expires_at > NOW()"
     )
     return cur.fetchone()
 
@@ -96,6 +96,61 @@ def pdf_to_images(file_bytes: bytes, to_fmt: str, quality: int = 90) -> list:
     else:
         img.save(out, format='PNG')
     return [base64.b64encode(out.getvalue()).decode()]
+
+
+def pdf_to_docx(file_bytes: bytes) -> bytes:
+    """PDF → DOCX: извлекаем текст и пакуем в .docx"""
+    from docx import Document
+    from docx.shared import Pt
+    text = pdf_to_text(file_bytes)
+    doc = Document()
+    doc.add_heading('Конвертировано из PDF', level=1)
+    for line in text.split('\n'):
+        line = line.strip()
+        if line:
+            p = doc.add_paragraph(line)
+            p.runs[0].font.size = Pt(11)
+    buf = io.BytesIO()
+    doc.save(buf)
+    return buf.getvalue()
+
+
+def pdf_to_xlsx(file_bytes: bytes) -> bytes:
+    """PDF → XLSX: таблица со строками текста из PDF"""
+    import openpyxl
+    text = pdf_to_text(file_bytes)
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = 'PDF Content'
+    ws.append(['#', 'Строка'])
+    for i, line in enumerate(text.split('\n'), 1):
+        if line.strip():
+            ws.append([i, line.strip()])
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def docx_to_txt(file_bytes: bytes) -> str:
+    """DOCX → TXT"""
+    from docx import Document
+    doc = Document(io.BytesIO(file_bytes))
+    lines = [p.text for p in doc.paragraphs]
+    return '\n'.join(lines)
+
+
+def txt_to_docx(text: str) -> bytes:
+    """TXT → DOCX"""
+    from docx import Document
+    from docx.shared import Pt
+    doc = Document()
+    for line in text.split('\n'):
+        p = doc.add_paragraph(line)
+        if p.runs:
+            p.runs[0].font.size = Pt(11)
+    buf = io.BytesIO()
+    doc.save(buf)
+    return buf.getvalue()
 
 
 def docx_to_pdf(file_bytes: bytes) -> bytes:
@@ -249,11 +304,37 @@ def handler(event: dict, context) -> dict:
             result_bytes = base64.b64decode(pages[0])
             result_mime = 'image/png' if to_fmt == 'PNG' else 'image/jpeg'
 
+        # PDF → DOCX
+        elif from_fmt == 'PDF' and to_fmt == 'DOCX':
+            result_bytes = pdf_to_docx(file_bytes)
+            result_mime = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+            result_ext = 'docx'
+
+        # PDF → XLSX
+        elif from_fmt == 'PDF' and to_fmt == 'XLSX':
+            result_bytes = pdf_to_xlsx(file_bytes)
+            result_mime = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+            result_ext = 'xlsx'
+
         # DOCX → PDF
         elif from_fmt == 'DOCX' and to_fmt == 'PDF':
             result_bytes = docx_to_pdf(file_bytes)
             result_mime = 'application/pdf'
             result_ext = 'pdf'
+
+        # DOCX → TXT
+        elif from_fmt == 'DOCX' and to_fmt == 'TXT':
+            text = docx_to_txt(file_bytes)
+            result_bytes = text.encode('utf-8')
+            result_mime = 'text/plain'
+            result_ext = 'txt'
+
+        # TXT → DOCX
+        elif from_fmt == 'TXT' and to_fmt == 'DOCX':
+            text = file_bytes.decode('utf-8', errors='replace')
+            result_bytes = txt_to_docx(text)
+            result_mime = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+            result_ext = 'docx'
 
         # PDF → TXT
         elif from_fmt == 'PDF' and to_fmt == 'TXT':
