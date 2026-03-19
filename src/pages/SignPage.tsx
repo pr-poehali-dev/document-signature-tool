@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import Icon from "@/components/ui/icon";
-import { documentsApi, User } from "@/lib/api";
+import { documentsApi, User, Stamp } from "@/lib/api";
 
 type SignMode = "draw" | "upload" | "text";
 type Step = "upload" | "sign" | "preview" | "done";
@@ -24,8 +24,24 @@ export default function SignPage({ user }: SignPageProps) {
   const [docId, setDocId] = useState<number | null>(null);
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
   const [error, setError] = useState("");
+  const [selectedStamp, setSelectedStamp] = useState<Stamp | null>(null);
+  const [stampX, setStampX] = useState(300);
+  const [stampY, setStampY] = useState(380);
+  const [showStamp, setShowStamp] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const lastPos = useRef<{ x: number; y: number } | null>(null);
+
+  useEffect(() => {
+    const saved = localStorage.getItem('selected_stamp');
+    if (saved) {
+      try {
+        const stamp = JSON.parse(saved) as Stamp;
+        setSelectedStamp(stamp);
+        setShowStamp(true);
+        localStorage.removeItem('selected_stamp');
+      } catch { /* ignore */ }
+    }
+  }, []);
 
   useEffect(() => {
     if (signMode === "draw" && canvasRef.current) {
@@ -140,6 +156,13 @@ export default function SignPage({ user }: SignPageProps) {
           {/* Step 1: Upload */}
           {step === "upload" && (
             <div className="space-y-4 animate-fade-in">
+              {selectedStamp && (
+                <div className="flex items-center gap-3 p-3 rounded-lg" style={{ background: 'rgba(74,158,255,0.08)', border: '1px solid rgba(74,158,255,0.25)' }}>
+                  <Icon name="Stamp" size={16} style={{ color: '#4A9EFF' }} />
+                  <span className="text-sm text-slate-300 flex-1">Печать <strong className="text-white">«{selectedStamp.name || selectedStamp.text}»</strong> будет добавлена в документ</span>
+                  <button onClick={() => { setSelectedStamp(null); setShowStamp(false); }} className="text-slate-500 hover:text-red-400 transition-colors"><Icon name="X" size={14} /></button>
+                </div>
+              )}
               <div className="rounded-xl border-2 border-dashed p-12 text-center cursor-pointer transition-all"
                 style={{ borderColor: uploadedFile ? 'rgba(74,222,128,0.4)' : 'rgba(201,168,76,0.3)', background: uploadedFile ? 'rgba(74,222,128,0.04)' : 'rgba(201,168,76,0.03)' }}
                 onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files?.[0]; if (f) { setUploadedFile(f); if (!docName) setDocName(f.name.replace(/\.[^.]+$/, "")); } }}
@@ -253,7 +276,7 @@ export default function SignPage({ user }: SignPageProps) {
           {/* Step 3: Preview */}
           {step === "preview" && (
             <div className="space-y-4 animate-fade-in">
-              <div className="text-sm text-slate-400 mb-3">Перетащите подпись на нужное место в документе</div>
+              <div className="text-sm text-slate-400 mb-3">Перетащите подпись {showStamp && selectedStamp ? 'и печать ' : ''}на нужное место в документе</div>
               <div className="relative rounded-lg overflow-hidden" style={{ background: '#f5f5f0', minHeight: '500px', border: '1px solid rgba(201,168,76,0.2)' }}>
                 <div className="p-8 space-y-3" style={{ color: '#1a1a2e' }}>
                   <div className="text-center font-bold text-xl mb-6" style={{ fontFamily: 'Montserrat' }}>{docName || "ДОКУМЕНТ"}</div>
@@ -261,6 +284,7 @@ export default function SignPage({ user }: SignPageProps) {
                     <div key={i} className="h-3 rounded" style={{ background: '#d0d0c8', width: `${w}%` }} />
                   ))}
                 </div>
+                {/* Подпись */}
                 <div className="absolute cursor-move select-none" style={{ left: signX, top: signY }}
                   onMouseDown={(e) => {
                     const sx = e.clientX - signX, sy = e.clientY - signY;
@@ -275,6 +299,32 @@ export default function SignPage({ user }: SignPageProps) {
                     </div>
                   </div>
                 </div>
+                {/* Печать */}
+                {showStamp && selectedStamp && (
+                  <div className="absolute cursor-move select-none" style={{ left: stampX, top: stampY }}
+                    onMouseDown={(e) => {
+                      const sx = e.clientX - stampX, sy = e.clientY - stampY;
+                      const onMove = (ev: MouseEvent) => { setStampX(ev.clientX - sx); setStampY(ev.clientY - sy); };
+                      const onUp = () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); };
+                      window.addEventListener('mousemove', onMove);
+                      window.addEventListener('mouseup', onUp);
+                    }}>
+                    <div className="rounded border-2 border-dashed p-1" style={{ borderColor: 'rgba(74,158,255,0.5)', background: 'rgba(74,158,255,0.03)' }}>
+                      {selectedStamp.image_url ? (
+                        <img src={selectedStamp.image_url} alt="Печать" style={{ width: 90, height: 90, objectFit: 'contain', opacity: 0.85 }} />
+                      ) : (
+                        <div style={{ opacity: 0.85 }}>
+                          <svg width="90" height="90" viewBox="0 0 90 90">
+                            <circle cx="45" cy="45" r="41" fill="none" stroke={selectedStamp.color} strokeWidth="2.5" />
+                            <circle cx="45" cy="45" r="35" fill="none" stroke={selectedStamp.color} strokeWidth="0.8" />
+                            <text x="45" y="49" textAnchor="middle" fill={selectedStamp.color} fontSize="11" fontWeight="bold" fontFamily="Arial">{selectedStamp.text}</text>
+                            {selectedStamp.company && <text x="45" y="61" textAnchor="middle" fill={selectedStamp.color} fontSize="7" fontFamily="Arial">{selectedStamp.company}</text>}
+                          </svg>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
               <div className="flex gap-3">
                 <button onClick={() => setStep("sign")} className="px-4 py-2.5 rounded-lg text-sm text-slate-400 hover:text-white transition-colors border" style={{ borderColor: 'rgba(255,255,255,0.1)' }}>

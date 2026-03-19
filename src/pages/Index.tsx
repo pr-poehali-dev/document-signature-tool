@@ -70,7 +70,7 @@ export default function Index() {
     switch (page) {
       case "home":      return <HomePage onNavigate={handleNavigate} user={user} />;
       case "sign":      return <SignPage user={user} />;
-      case "stamps":    return <StampsPage user={user} />;
+      case "stamps":    return <StampsPage user={user} onNavigate={handleNavigate} />;
       case "converter": return <ConverterPage />;
       case "templates": return <TemplatesPage />;
       case "history":   return <HistoryPage />;

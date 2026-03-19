@@ -1,6 +1,7 @@
 const AUTH_URL = 'https://functions.poehali.dev/9a83e766-8697-4df4-8847-16022a2240f8';
 const DOCS_URL = 'https://functions.poehali.dev/9788d9e4-6a5d-405e-a299-7d50e71734d8';
 const STAMPS_URL = 'https://functions.poehali.dev/879071c6-90cc-4119-a540-f35b4f6b85ea';
+const UPLOAD_STAMP_URL = 'https://functions.poehali.dev/76a3544d-741c-4cf9-bb60-d55383d9b23d';
 const CONVERTER_URL = 'https://functions.poehali.dev/41ae3bf6-8f34-4b8c-9057-8d2e5e8595e8';
 
 // ─── Token storage ───────────────────────────────────────────────
@@ -153,18 +154,27 @@ export interface Stamp {
   color: string;
   is_library: boolean;
   created_at: string;
+  image_url?: string | null;
 }
 
 export const stampsApi = {
   async list(): Promise<Stamp[]> {
     const data = await apiFetch(`${STAMPS_URL}/`);
-    return data.stamps || [];
+    return [...(data.personal || []), ...(data.library || [])];
   },
 
   async create(stamp: Omit<Stamp, 'id' | 'created_at'>): Promise<{ id: number }> {
     return apiFetch(`${STAMPS_URL}/`, {
       method: 'POST',
       body: JSON.stringify(stamp),
+    });
+  },
+
+  async uploadFile(file: File): Promise<{ id: number; image_url: string; name: string }> {
+    const file_data = await fileToBase64(file);
+    return apiFetch(`${UPLOAD_STAMP_URL}/`, {
+      method: 'POST',
+      body: JSON.stringify({ file_data, file_name: file.name, file_type: file.type, name: file.name }),
     });
   },
 

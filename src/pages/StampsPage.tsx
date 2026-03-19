@@ -5,12 +5,6 @@ import { stampsApi, Stamp, User } from "@/lib/api";
 type StampShape = "round" | "square" | "rect" | "oval";
 type StampTab = "library" | "create";
 
-interface UploadedStampFile {
-  name: string;
-  url: string;
-  type: string;
-}
-
 const stampLibrary = [
   { id: 1, shape: "round" as StampShape, company: "ООО «Ромашка»", text: "УТВЕРЖДЕНО", inn: "ИНН 7701234567", color: "#1a3a6e" },
   { id: 2, shape: "round" as StampShape, company: "АО «Технологии»", text: "СОГЛАСОВАНО", inn: "ИНН 7709876543", color: "#8B1A1A" },
@@ -76,29 +70,29 @@ function StampPreview({ shape, company, text, inn, color, size = 120 }: {
   );
 }
 
-interface StampsPageProps { user?: User | null; }
+interface StampsPageProps { user?: User | null; onNavigate?: (page: string) => void; }
 
-export default function StampsPage({ user }: StampsPageProps) {
+export default function StampsPage({ user, onNavigate }: StampsPageProps) {
   const [activeTab, setActiveTab] = useState<StampTab>("library");
   const [selectedStamp, setSelectedStamp] = useState<number | null>(null);
   const [newStamp, setNewStamp] = useState({ shape: "round" as StampShape, company: "ООО «Ваша компания»", text: "УТВЕРЖДЕНО", inn: "ИНН 0000000000", color: "#1a3a6e" });
   const [dbStamps, setDbStamps] = useState<Stamp[]>([]);
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState("");
-  const [uploadedFiles, setUploadedFiles] = useState<UploadedStampFile[]>([]);
   const [uploadDragging, setUploadDragging] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState("");
+  const [appliedStamp, setAppliedStamp] = useState<Stamp | null>(null);
 
   useEffect(() => {
-    if (user) {
-      stampsApi.list().then(setDbStamps).catch(() => {});
-    }
+    stampsApi.list().then(setDbStamps).catch(() => {});
   }, [user]);
 
   const handleSaveToLibrary = async () => {
     if (!user) { setSaveMsg("Войдите в аккаунт чтобы сохранить"); setTimeout(() => setSaveMsg(""), 3000); return; }
     setSaving(true);
     try {
-      await stampsApi.create({ ...newStamp, name: newStamp.text, is_library: true });
+      await stampsApi.create({ ...newStamp, name: newStamp.text, is_library: false });
       const updated = await stampsApi.list();
       setDbStamps(updated);
       setSaveMsg("Печать сохранена в библиотеку!");
@@ -113,21 +107,42 @@ export default function StampsPage({ user }: StampsPageProps) {
   const handleDeleteStamp = async (id: number) => {
     await stampsApi.delete(id).catch(() => {});
     setDbStamps(prev => prev.filter(s => s.id !== id));
+    if (appliedStamp?.id === id) setAppliedStamp(null);
   };
 
-  const handleFileUpload = (files: FileList | null) => {
-    if (!files) return;
-    Array.from(files).forEach((file) => {
-      const url = URL.createObjectURL(file);
-      setUploadedFiles(prev => [...prev, { name: file.name, url, type: file.type }]);
-    });
+  const handleApplyStamp = (stamp: Stamp) => {
+    setAppliedStamp(stamp);
+    localStorage.setItem('selected_stamp', JSON.stringify(stamp));
+    if (onNavigate) onNavigate('sign');
   };
 
-  const handleRemoveUploaded = (index: number) => {
-    setUploadedFiles(prev => {
-      URL.revokeObjectURL(prev[index].url);
-      return prev.filter((_, i) => i !== index);
-    });
+  const handleFileUpload = async (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    setUploading(true);
+    setUploadError("");
+    try {
+      for (const file of Array.from(files)) {
+        const result = await stampsApi.uploadFile(file);
+        const newStampEntry: Stamp = {
+          id: result.id,
+          name: result.name,
+          shape: 'image',
+          company: '',
+          text: result.name,
+          inn: '',
+          color: '#000000',
+          is_library: false,
+          created_at: new Date().toISOString(),
+          image_url: result.image_url,
+        };
+        setDbStamps(prev => [newStampEntry, ...prev]);
+      }
+    } catch {
+      setUploadError("Ошибка загрузки. Попробуйте ещё раз.");
+      setTimeout(() => setUploadError(""), 4000);
+    } finally {
+      setUploading(false);
+    }
   };
 
   return (
@@ -167,13 +182,18 @@ export default function StampsPage({ user }: StampsPageProps) {
                     onClick={() => setSelectedStamp(selectedStamp === stamp.id ? null : stamp.id)}
                     className="glass-card-hover rounded-lg p-5 text-center cursor-pointer transition-all"
                     style={selectedStamp === stamp.id ? { borderColor: 'rgba(201,168,76,0.6)', background: 'rgba(201,168,76,0.05)' } : {}}>
-                    <div className="flex justify-center mb-4" style={{ opacity: 0.75 }}>
-                      <StampPreview shape={stamp.shape as StampShape} company={stamp.company || ""} text={stamp.text || ""} inn={stamp.inn || ""} color={stamp.color || "#1a3a6e"} size={100} />
+                    <div className="flex justify-center mb-4" style={{ opacity: 0.75, height: 100 }}>
+                      {stamp.image_url ? (
+                        <img src={stamp.image_url} alt={stamp.name || stamp.text} className="max-h-full max-w-full object-contain" />
+                      ) : (
+                        <StampPreview shape={stamp.shape as StampShape} company={stamp.company || ""} text={stamp.text || ""} inn={stamp.inn || ""} color={stamp.color || "#1a3a6e"} size={100} />
+                      )}
                     </div>
-                    <div className="text-sm font-medium text-white mb-0.5">{stamp.text}</div>
+                    <div className="text-sm font-medium text-white mb-0.5 truncate">{stamp.name || stamp.text}</div>
                     {stamp.company && <div className="text-xs" style={{ color: '#7A90A8' }}>{stamp.company}</div>}
                     <div className="mt-3 flex gap-2">
-                      <button className="flex-1 py-1.5 rounded text-xs btn-gold shine-effect">Применить</button>
+                      <button onClick={(e) => { e.stopPropagation(); handleApplyStamp(stamp); }}
+                        className="flex-1 py-1.5 rounded text-xs btn-gold shine-effect">Применить</button>
                       <button onClick={(e) => { e.stopPropagation(); handleDeleteStamp(stamp.id); }}
                         className="px-3 py-1.5 rounded text-xs border text-slate-400 hover:text-red-400 transition-colors" style={{ borderColor: 'rgba(255,255,255,0.1)' }}>
                         <Icon name="Trash2" size={12} />
@@ -200,10 +220,9 @@ export default function StampsPage({ user }: StampsPageProps) {
                 <div className="text-sm font-medium text-white mb-0.5">{stamp.text}</div>
                 {stamp.company && <div className="text-xs" style={{ color: '#7A90A8' }}>{stamp.company}</div>}
                 <div className="mt-3 flex gap-2">
-                  <button className="flex-1 py-1.5 rounded text-xs btn-gold shine-effect">Применить</button>
-                  <button className="px-3 py-1.5 rounded text-xs border text-slate-400 hover:text-white transition-colors" style={{ borderColor: 'rgba(255,255,255,0.1)' }}>
-                    <Icon name="Download" size={12} />
-                  </button>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); handleApplyStamp({ id: stamp.id, name: stamp.text, shape: stamp.shape, company: stamp.company, text: stamp.text, inn: stamp.inn, color: stamp.color, is_library: true, created_at: '' }); }}
+                    className="flex-1 py-1.5 rounded text-xs btn-gold shine-effect">Применить</button>
                 </div>
               </div>
             ))}
@@ -217,65 +236,36 @@ export default function StampsPage({ user }: StampsPageProps) {
               style={{
                 border: `2px dashed ${uploadDragging ? '#C9A84C' : 'rgba(201,168,76,0.3)'}`,
                 background: uploadDragging ? 'rgba(201,168,76,0.06)' : 'rgba(17,32,64,0.4)',
+                pointerEvents: uploading ? 'none' : 'auto',
+                opacity: uploading ? 0.7 : 1,
               }}
               onDragOver={(e) => { e.preventDefault(); setUploadDragging(true); }}
               onDragLeave={() => setUploadDragging(false)}
               onDrop={(e) => { e.preventDefault(); setUploadDragging(false); handleFileUpload(e.dataTransfer.files); }}
-              onClick={() => document.getElementById('stamp-file-input')?.click()}
+              onClick={() => !uploading && document.getElementById('stamp-file-input')?.click()}
             >
               <input
                 id="stamp-file-input"
                 type="file"
                 multiple
-                accept="*/*"
+                accept="image/*,.pdf,.svg"
                 className="hidden"
-                onChange={(e) => handleFileUpload(e.target.files)}
+                onChange={(e) => { handleFileUpload(e.target.files); e.target.value = ''; }}
               />
-              <Icon name="Upload" size={28} className="mx-auto mb-2" style={{ color: '#C9A84C' }} />
-              <div className="text-sm text-white mb-1">Перетащите файл или нажмите для выбора</div>
-              <div className="text-xs" style={{ color: '#7A90A8' }}>PNG, JPG, PDF, SVG и любые другие форматы</div>
+              {uploading ? (
+                <>
+                  <div className="w-7 h-7 border-2 border-t-transparent rounded-full animate-spin mx-auto mb-2" style={{ borderColor: '#C9A84C', borderTopColor: 'transparent' }} />
+                  <div className="text-sm text-white">Загрузка на сервер...</div>
+                </>
+              ) : (
+                <>
+                  <Icon name="Upload" size={28} className="mx-auto mb-2" style={{ color: '#C9A84C' }} />
+                  <div className="text-sm text-white mb-1">Перетащите файл или нажмите для выбора</div>
+                  <div className="text-xs" style={{ color: '#7A90A8' }}>PNG, JPG, SVG — файл загрузится и появится в «Мои печати»</div>
+                </>
+              )}
             </div>
-
-            {uploadedFiles.length > 0 && (
-              <div className="mt-4 grid grid-cols-3 gap-4">
-                {uploadedFiles.map((file, idx) => (
-                  <div key={idx} className="glass-card rounded-lg p-4 text-center relative">
-                    <button
-                      onClick={() => handleRemoveUploaded(idx)}
-                      className="absolute top-2 right-2 w-6 h-6 flex items-center justify-center rounded-full transition-colors hover:text-red-400"
-                      style={{ background: 'rgba(255,255,255,0.06)', color: '#7A90A8' }}
-                    >
-                      <Icon name="X" size={12} />
-                    </button>
-                    <div className="flex justify-center items-center mb-3" style={{ height: 80 }}>
-                      {file.type.startsWith('image/') ? (
-                        <img src={file.url} alt={file.name} className="max-h-20 max-w-full rounded object-contain" />
-                      ) : (
-                        <div className="flex flex-col items-center gap-1">
-                          <Icon name="FileCheck" size={36} style={{ color: '#C9A84C' }} />
-                          <span className="text-xs uppercase font-bold" style={{ color: '#C9A84C' }}>
-                            {file.name.split('.').pop()}
-                          </span>
-                        </div>
-                      )}
-                    </div>
-                    <div className="text-xs text-white truncate px-1" title={file.name}>{file.name}</div>
-                    <div className="mt-3 flex gap-2">
-                      <button className="flex-1 py-1.5 rounded text-xs btn-gold shine-effect">Применить</button>
-                      <a
-                        href={file.url}
-                        download={file.name}
-                        className="px-3 py-1.5 rounded text-xs border text-slate-400 hover:text-white transition-colors flex items-center"
-                        style={{ borderColor: 'rgba(255,255,255,0.1)' }}
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        <Icon name="Download" size={12} />
-                      </a>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
+            {uploadError && <div className="mt-2 text-xs text-center" style={{ color: '#f87171' }}>{uploadError}</div>}
           </div>
 
           <div className="mt-6 p-4 rounded-lg" style={{ background: 'rgba(201,168,76,0.05)', border: '1px solid rgba(201,168,76,0.15)' }}>

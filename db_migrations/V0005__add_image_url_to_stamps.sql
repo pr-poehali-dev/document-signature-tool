@@ -1,0 +1,1 @@
+ALTER TABLE t_p80989514_document_signature_t.stamps ADD COLUMN IF NOT EXISTS image_url TEXT NULL;

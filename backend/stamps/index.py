@@ -45,33 +45,47 @@ def handler(event: dict, context) -> dict:
     try:
         user = get_user_from_token(cur, token, schema)
 
+        def row_to_dict(r):
+            return {'id': r[0], 'user_id': r[1], 'name': r[2], 'shape': r[3], 'company': r[4],
+                    'text': r[5], 'inn': r[6], 'color': r[7], 'is_library': r[8],
+                    'created_at': r[9].isoformat() if r[9] else None,
+                    'image_url': r[10] if len(r) > 10 else None}
+
         # GET / — получить печати (библиотека + личные)
         if method == 'GET':
             cur.execute(
-                f'''SELECT id, user_id, name, shape, company, text, inn, color, is_library, created_at
-                    FROM {schema}.stamps WHERE is_library = TRUE ORDER BY id''',
+                f'''SELECT id, user_id, name, shape, company, text, inn, color, is_library, created_at, image_url
+                    FROM {schema}.stamps WHERE is_library = TRUE ORDER BY id'''
             )
             library = cur.fetchall()
 
             personal = []
             if user:
                 cur.execute(
-                    f'''SELECT id, user_id, name, shape, company, text, inn, color, is_library, created_at
+                    f'''SELECT id, user_id, name, shape, company, text, inn, color, is_library, created_at, image_url
                         FROM {schema}.stamps WHERE user_id = %s AND is_library = FALSE ORDER BY created_at DESC''',
                     (user[0],)
                 )
                 personal = cur.fetchall()
 
-            def row_to_dict(r):
-                return {'id': r[0], 'user_id': r[1], 'name': r[2], 'shape': r[3], 'company': r[4],
-                        'text': r[5], 'inn': r[6], 'color': r[7], 'is_library': r[8],
-                        'created_at': r[9].isoformat() if r[9] else None}
-
             return {
                 'statusCode': 200,
                 'headers': headers,
-                'body': json.dumps({'library': [row_to_dict(r) for r in library], 'personal': [row_to_dict(r) for r in personal]})
+                'body': json.dumps({'library': [row_to_dict(r) for r in library], 'personal': [row_to_dict(r) for r in personal], 'stamps': [row_to_dict(r) for r in personal]})
             }
+
+        # DELETE /{id} — удалить печать
+        if method == 'DELETE':
+            parts = [p for p in path.split('/') if p]
+            if not parts:
+                return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'id required'})}
+            stamp_id = int(parts[-1])
+            if user:
+                cur.execute(f'DELETE FROM {schema}.stamps WHERE id = %s AND user_id = %s', (stamp_id, user[0]))
+            else:
+                cur.execute(f'DELETE FROM {schema}.stamps WHERE id = %s', (stamp_id,))
+            conn.commit()
+            return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'ok': True})}
 
         # POST / — создать печать
         if method == 'POST':
