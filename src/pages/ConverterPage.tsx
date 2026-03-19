@@ -1,5 +1,6 @@
-import { useState, useRef } from "react";
+import { useState } from "react";
 import Icon from "@/components/ui/icon";
+import { converterApi, ConvertResult } from "@/lib/api";
 
 type ConvertCategory = "documents" | "images" | "compress";
 
@@ -41,7 +42,6 @@ interface ActiveConversion {
 export default function ConverterPage() {
   const [category, setCategory] = useState<ConvertCategory>("documents");
   const [active, setActive] = useState<ActiveConversion | null>(null);
-  const [_targetFormat, setTargetFormat] = useState("");
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const [converting, setConverting] = useState(false);
   const [done, setDone] = useState(false);
@@ -49,55 +49,53 @@ export default function ConverterPage() {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [showPreview, setShowPreview] = useState(false);
   const [resultSize, setResultSize] = useState("");
-  const _downloadRef = useRef<HTMLAnchorElement>(null);
+  const [convertResult, setConvertResult] = useState<ConvertResult | null>(null);
+  const [convertError, setConvertError] = useState("");
 
   const isImageFormat = (fmt: string) => ["PNG", "JPG", "WEBP", "BMP", "TIFF", "SVG"].includes(fmt.toUpperCase());
 
-  const handleConvert = () => {
+  const fmtBytes = (n: number) => n > 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${(n / 1024).toFixed(0)} KB`;
+
+  const handleConvert = async () => {
     if (!uploadedFile || !active) return;
     setConverting(true);
     setDone(false);
     setPreviewUrl(null);
+    setConvertError("");
+    setConvertResult(null);
 
-    setTimeout(() => {
-      setConverting(false);
+    try {
+      const fromFmt = active.from.includes("(") ? active.from.split("(")[0].trim() : active.from;
+      const toFmt = active.to.includes(" ") ? uploadedFile.name.split(".").pop()?.toUpperCase() || active.from : active.to;
+      const result = await converterApi.convert(uploadedFile, fromFmt, toFmt, quality);
+      setConvertResult(result);
+      setResultSize(fmtBytes(result.result_size));
       setDone(true);
 
-      // Симуляция размера после конвертации
-      const origKB = uploadedFile.size / 1024;
-      const factor = category === "compress" ? (quality / 100) * 0.6 : 0.95;
-      const newKB = origKB * factor;
-      setResultSize(newKB > 1024 ? `${(newKB / 1024).toFixed(1)} MB` : `${newKB.toFixed(0)} KB`);
-
-      // Для изображений — показываем превью оригинала (в реальности был бы конвертированный)
-      if (uploadedFile.type.startsWith("image/") && isImageFormat(active.to)) {
-        const url = URL.createObjectURL(uploadedFile);
-        setPreviewUrl(url);
+      // Превью для изображений
+      if (isImageFormat(toFmt) && result.file_data) {
+        setPreviewUrl(`data:${result.file_mime};base64,${result.file_data}`);
       }
-    }, 2000);
+    } catch (e: unknown) {
+      setConvertError(e instanceof Error ? e.message : "Ошибка конвертации");
+    } finally {
+      setConverting(false);
+    }
   };
 
   const handleDownload = () => {
-    if (!uploadedFile || !active) return;
-    // Скачиваем исходный файл с новым именем (в реальности — конвертированный)
-    const url = URL.createObjectURL(uploadedFile);
-    const a = document.createElement("a");
-    const baseName = uploadedFile.name.replace(/\.[^.]+$/, "");
-    a.href = url;
-    a.download = `${baseName}_converted.${active.to.toLowerCase()}`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    if (!convertResult) return;
+    converterApi.downloadFromBase64(convertResult.file_data, convertResult.file_name, convertResult.file_mime);
   };
 
   const handleSelectConversion = (from: string, to: string) => {
     setActive({ from, to });
-    setTargetFormat(to);
     setUploadedFile(null);
     setDone(false);
     setPreviewUrl(null);
     setShowPreview(false);
+    setConvertResult(null);
+    setConvertError("");
   };
 
   return (
@@ -228,6 +226,12 @@ export default function ConverterPage() {
                   </div>
                 )}
               </div>
+
+              {convertError && (
+                <div className="flex items-center gap-2 p-3 rounded-lg text-sm" style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)', color: '#f87171' }}>
+                  <Icon name="AlertCircle" size={15} /> {convertError}
+                </div>
+              )}
 
               {done ? (
                 <div className="animate-scale-in space-y-3">

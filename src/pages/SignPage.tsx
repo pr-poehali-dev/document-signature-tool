@@ -1,10 +1,15 @@
 import { useState, useRef, useEffect } from "react";
 import Icon from "@/components/ui/icon";
+import { documentsApi, User } from "@/lib/api";
 
 type SignMode = "draw" | "upload" | "text";
 type Step = "upload" | "sign" | "preview" | "done";
 
-export default function SignPage() {
+interface SignPageProps {
+  user?: User | null;
+}
+
+export default function SignPage({ user }: SignPageProps) {
   const [step, setStep] = useState<Step>("upload");
   const [signMode, setSignMode] = useState<SignMode>("draw");
   const [docName, setDocName] = useState("");
@@ -14,26 +19,24 @@ export default function SignPage() {
   const [signatureText, setSignatureText] = useState("");
   const [signX, setSignX] = useState(120);
   const [signY, setSignY] = useState(320);
+  const [uploading, setUploading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [docId, setDocId] = useState<number | null>(null);
+  const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
+  const [error, setError] = useState("");
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const lastPos = useRef<{ x: number; y: number } | null>(null);
 
   useEffect(() => {
     if (signMode === "draw" && canvasRef.current) {
       const ctx = canvasRef.current.getContext("2d");
-      if (ctx) {
-        ctx.strokeStyle = "#1a1a2e";
-        ctx.lineWidth = 2.5;
-        ctx.lineCap = "round";
-        ctx.lineJoin = "round";
-      }
+      if (ctx) { ctx.strokeStyle = "#1a1a2e"; ctx.lineWidth = 2.5; ctx.lineCap = "round"; ctx.lineJoin = "round"; }
     }
   }, [signMode, step]);
 
   const getPos = (e: React.MouseEvent | React.TouchEvent, canvas: HTMLCanvasElement) => {
     const rect = canvas.getBoundingClientRect();
-    if ("touches" in e) {
-      return { x: e.touches[0].clientX - rect.left, y: e.touches[0].clientY - rect.top };
-    }
+    if ("touches" in e) return { x: e.touches[0].clientX - rect.left, y: e.touches[0].clientY - rect.top };
     return { x: (e as React.MouseEvent).clientX - rect.left, y: (e as React.MouseEvent).clientY - rect.top };
   };
 
@@ -42,53 +45,67 @@ export default function SignPage() {
     setIsDrawing(true);
     lastPos.current = getPos(e, canvasRef.current);
   };
-
   const draw = (e: React.MouseEvent | React.TouchEvent) => {
     if (!isDrawing || !canvasRef.current || !lastPos.current) return;
     e.preventDefault();
     const ctx = canvasRef.current.getContext("2d");
     if (!ctx) return;
     const pos = getPos(e, canvasRef.current);
-    ctx.beginPath();
-    ctx.moveTo(lastPos.current.x, lastPos.current.y);
-    ctx.lineTo(pos.x, pos.y);
-    ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(lastPos.current.x, lastPos.current.y); ctx.lineTo(pos.x, pos.y); ctx.stroke();
     lastPos.current = pos;
     setHasSignature(true);
   };
-
-  const stopDraw = () => {
-    setIsDrawing(false);
-    lastPos.current = null;
-  };
+  const stopDraw = () => { setIsDrawing(false); lastPos.current = null; };
 
   const clearCanvas = () => {
     if (!canvasRef.current) return;
-    const ctx = canvasRef.current.getContext("2d");
-    ctx?.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+    canvasRef.current.getContext("2d")?.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
     setHasSignature(false);
   };
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      setUploadedFile(file);
-      if (!docName) setDocName(file.name.replace(/\.[^.]+$/, ""));
+  const getSignatureData = (): string => {
+    if (signMode === "draw" && canvasRef.current) return canvasRef.current.toDataURL();
+    if (signMode === "text" && signatureText) return `text:${signatureText}`;
+    return "";
+  };
+
+  const handleUploadAndContinue = async () => {
+    if (!uploadedFile) return;
+    setUploading(true);
+    setError("");
+    try {
+      const res = await documentsApi.upload(uploadedFile, docName || uploadedFile.name.replace(/\.[^.]+$/, ""));
+      setDocId(res.id);
+      setStep("sign");
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Ошибка загрузки");
+    } finally {
+      setUploading(false);
     }
   };
 
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    const file = e.dataTransfer.files?.[0];
-    if (file) {
-      setUploadedFile(file);
-      if (!docName) setDocName(file.name.replace(/\.[^.]+$/, ""));
+  const handleSaveAndDownload = async () => {
+    if (!docId) return;
+    setSaving(true);
+    setError("");
+    try {
+      const sigData = getSignatureData();
+      await documentsApi.sign(docId, sigData, signX, signY, false);
+      const dlRes = await documentsApi.download(docId);
+      setDownloadUrl(dlRes.url);
+      setStep("done");
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Ошибка сохранения");
+    } finally {
+      setSaving(false);
     }
   };
+
+  const steps = ["upload", "sign", "preview", "done"];
+  const stepLabels = ["Загрузка", "Подпись", "Просмотр", "Готово"];
 
   return (
     <div className="p-6">
-      {/* Header */}
       <div className="mb-6">
         <h1 className="font-montserrat font-700 text-xl text-white mb-1">Подписание документа</h1>
         <p className="text-sm" style={{ color: '#7A90A8' }}>Загрузите файл, добавьте подпись и скачайте готовый документ</p>
@@ -96,46 +113,40 @@ export default function SignPage() {
 
       {/* Steps */}
       <div className="flex items-center gap-0 mb-8">
-        {[
-          { id: "upload", label: "Загрузка" },
-          { id: "sign", label: "Подпись" },
-          { id: "preview", label: "Просмотр" },
-          { id: "done", label: "Готово" },
-        ].map((s, i) => (
-          <div key={s.id} className="flex items-center">
-            <div className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium transition-all ${
-              step === s.id ? 'text-navy font-semibold' : step === 'done' || (i < ['upload','sign','preview','done'].indexOf(step)) ? 'text-green-400' : 'text-slate-500'
-            }`}
-              style={step === s.id ? { background: 'linear-gradient(135deg, #C9A84C, #A07830)' } : {}}
-            >
-              <span className="w-5 h-5 rounded-full flex items-center justify-center text-xs border" style={{
-                borderColor: step === s.id ? 'transparent' : 'rgba(255,255,255,0.15)',
-                background: step === s.id ? 'rgba(255,255,255,0.2)' : 'transparent'
-              }}>
+        {steps.map((s, i) => (
+          <div key={s} className="flex items-center">
+            <div className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium transition-all ${step === s ? 'text-navy font-semibold' : ''}`}
+              style={step === s ? { background: 'linear-gradient(135deg, #C9A84C, #A07830)', color: '#0A1628' } : { color: '#7A90A8' }}>
+              <span className="w-5 h-5 rounded-full flex items-center justify-center text-xs border"
+                style={{ borderColor: step === s ? 'transparent' : 'rgba(255,255,255,0.15)', background: step === s ? 'rgba(255,255,255,0.2)' : 'transparent' }}>
                 {i + 1}
               </span>
-              {s.label}
+              {stepLabels[i]}
             </div>
             {i < 3 && <div className="w-8 h-px mx-1" style={{ background: 'rgba(201,168,76,0.2)' }} />}
           </div>
         ))}
       </div>
 
+      {error && (
+        <div className="mb-4 flex items-center gap-2 p-3 rounded-lg text-sm" style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)', color: '#f87171' }}>
+          <Icon name="AlertCircle" size={15} /> {error}
+        </div>
+      )}
+
       <div className="grid grid-cols-5 gap-6">
-        {/* Main area */}
         <div className="col-span-3">
 
           {/* Step 1: Upload */}
           {step === "upload" && (
             <div className="space-y-4 animate-fade-in">
-              <div
-                className="rounded-xl border-2 border-dashed p-12 text-center cursor-pointer transition-all"
+              <div className="rounded-xl border-2 border-dashed p-12 text-center cursor-pointer transition-all"
                 style={{ borderColor: uploadedFile ? 'rgba(74,222,128,0.4)' : 'rgba(201,168,76,0.3)', background: uploadedFile ? 'rgba(74,222,128,0.04)' : 'rgba(201,168,76,0.03)' }}
-                onDrop={handleDrop}
+                onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files?.[0]; if (f) { setUploadedFile(f); if (!docName) setDocName(f.name.replace(/\.[^.]+$/, "")); } }}
                 onDragOver={(e) => e.preventDefault()}
-                onClick={() => document.getElementById('fileInput')?.click()}
-              >
-                <input id="fileInput" type="file" className="hidden" accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg" onChange={handleFileUpload} />
+                onClick={() => document.getElementById('fileInput')?.click()}>
+                <input id="fileInput" type="file" className="hidden" accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg"
+                  onChange={(e) => { const f = e.target.files?.[0]; if (f) { setUploadedFile(f); if (!docName) setDocName(f.name.replace(/\.[^.]+$/, "")); } }} />
                 {uploadedFile ? (
                   <div>
                     <div className="w-16 h-16 rounded-xl mx-auto mb-4 flex items-center justify-center" style={{ background: 'rgba(74,222,128,0.15)' }}>
@@ -156,23 +167,15 @@ export default function SignPage() {
               </div>
               <div>
                 <label className="block text-sm font-medium mb-2 text-slate-300">Название документа</label>
-                <input
-                  type="text"
-                  value={docName}
-                  onChange={(e) => setDocName(e.target.value)}
+                <input type="text" value={docName} onChange={(e) => setDocName(e.target.value)}
                   placeholder="Например: Договор аренды №12"
-                  className="w-full px-4 py-2.5 rounded-lg text-sm text-white placeholder-slate-500 outline-none transition-all"
-                  style={{ background: 'rgba(17,32,64,0.8)', border: '1px solid rgba(201,168,76,0.2)', }}
-                  onFocus={(e) => e.target.style.borderColor = 'rgba(201,168,76,0.6)'}
-                  onBlur={(e) => e.target.style.borderColor = 'rgba(201,168,76,0.2)'}
-                />
+                  className="w-full px-4 py-2.5 rounded-lg text-sm text-white placeholder-slate-500 outline-none"
+                  style={{ background: 'rgba(17,32,64,0.8)', border: '1px solid rgba(201,168,76,0.2)' }} />
               </div>
-              <button
-                onClick={() => uploadedFile && setStep("sign")}
-                disabled={!uploadedFile}
-                className="btn-gold w-full py-3 rounded-lg text-sm font-semibold disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                Далее — Добавить подпись
+              {!user && <div className="text-xs p-3 rounded-lg" style={{ background: 'rgba(201,168,76,0.08)', border: '1px solid rgba(201,168,76,0.2)', color: '#C9A84C' }}>⚠ Войдите в аккаунт чтобы сохранить документ в историю</div>}
+              <button onClick={handleUploadAndContinue} disabled={!uploadedFile || uploading}
+                className="btn-gold w-full py-3 rounded-lg text-sm font-semibold disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2">
+                {uploading ? <><div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />Загрузка...</> : "Далее — Добавить подпись"}
               </button>
             </div>
           )}
@@ -180,21 +183,16 @@ export default function SignPage() {
           {/* Step 2: Sign */}
           {step === "sign" && (
             <div className="space-y-4 animate-fade-in">
-              {/* Mode selector */}
               <div className="flex gap-2 p-1 rounded-lg" style={{ background: 'rgba(17,32,64,0.8)', border: '1px solid rgba(201,168,76,0.15)' }}>
                 {([
                   { id: "draw", label: "Нарисовать", icon: "Pen" },
                   { id: "upload", label: "Загрузить", icon: "Upload" },
                   { id: "text", label: "Текстом", icon: "Type" },
                 ] as { id: SignMode; label: string; icon: string }[]).map((m) => (
-                  <button
-                    key={m.id}
-                    onClick={() => setSignMode(m.id)}
+                  <button key={m.id} onClick={() => setSignMode(m.id)}
                     className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-md text-sm font-medium transition-all"
-                    style={signMode === m.id ? { background: 'linear-gradient(135deg, #C9A84C, #A07830)', color: '#0A1628' } : { color: '#7A90A8' }}
-                  >
-                    <Icon name={m.icon} size={15} />
-                    {m.label}
+                    style={signMode === m.id ? { background: 'linear-gradient(135deg, #C9A84C, #A07830)', color: '#0A1628' } : { color: '#7A90A8' }}>
+                    <Icon name={m.icon} size={15} /> {m.label}
                   </button>
                 ))}
               </div>
@@ -207,31 +205,17 @@ export default function SignPage() {
                       <Icon name="Trash2" size={13} /> Очистить
                     </button>
                   </div>
-                  <canvas
-                    ref={canvasRef}
-                    width={500}
-                    height={160}
-                    className="canvas-area w-full rounded-lg"
-                    onMouseDown={startDraw}
-                    onMouseMove={draw}
-                    onMouseUp={stopDraw}
-                    onMouseLeave={stopDraw}
-                    onTouchStart={startDraw}
-                    onTouchMove={draw}
-                    onTouchEnd={stopDraw}
-                  />
-                  {!hasSignature && (
-                    <div className="text-center text-xs mt-2" style={{ color: '#7A90A8' }}>↑ Кликните и ведите мышью для подписи</div>
-                  )}
+                  <canvas ref={canvasRef} width={500} height={160} className="canvas-area w-full rounded-lg"
+                    onMouseDown={startDraw} onMouseMove={draw} onMouseUp={stopDraw} onMouseLeave={stopDraw}
+                    onTouchStart={startDraw} onTouchMove={draw} onTouchEnd={stopDraw} />
+                  {!hasSignature && <div className="text-center text-xs mt-2" style={{ color: '#7A90A8' }}>↑ Кликните и ведите мышью для подписи</div>}
                 </div>
               )}
 
               {signMode === "upload" && (
-                <div
-                  className="rounded-lg border-2 border-dashed p-8 text-center cursor-pointer"
+                <div className="rounded-lg border-2 border-dashed p-8 text-center cursor-pointer"
                   style={{ borderColor: 'rgba(201,168,76,0.3)' }}
-                  onClick={() => document.getElementById('sigInput')?.click()}
-                >
+                  onClick={() => document.getElementById('sigInput')?.click()}>
                   <input id="sigInput" type="file" className="hidden" accept=".png,.jpg,.jpeg,.svg" />
                   <Icon name="Image" size={32} className="mx-auto mb-3" style={{ color: '#C9A84C' }} />
                   <div className="text-sm text-slate-300">Загрузите изображение подписи</div>
@@ -241,14 +225,10 @@ export default function SignPage() {
 
               {signMode === "text" && (
                 <div className="space-y-3">
-                  <input
-                    type="text"
-                    value={signatureText}
-                    onChange={(e) => setSignatureText(e.target.value)}
+                  <input type="text" value={signatureText} onChange={(e) => setSignatureText(e.target.value)}
                     placeholder="Введите ФИО..."
                     className="w-full px-4 py-2.5 rounded-lg text-white placeholder-slate-500 outline-none"
-                    style={{ background: 'rgba(17,32,64,0.8)', border: '1px solid rgba(201,168,76,0.2)', fontFamily: 'cursive', fontSize: '18px' }}
-                  />
+                    style={{ background: 'rgba(17,32,64,0.8)', border: '1px solid rgba(201,168,76,0.2)', fontFamily: 'cursive', fontSize: '18px' }} />
                   {signatureText && (
                     <div className="p-4 rounded-lg text-center" style={{ background: 'rgba(255,255,255,0.97)', fontFamily: 'cursive', fontSize: '28px', color: '#1a1a2e' }}>
                       {signatureText}
@@ -261,11 +241,9 @@ export default function SignPage() {
                 <button onClick={() => setStep("upload")} className="px-4 py-2.5 rounded-lg text-sm text-slate-400 hover:text-white transition-colors border" style={{ borderColor: 'rgba(255,255,255,0.1)' }}>
                   ← Назад
                 </button>
-                <button
-                  onClick={() => setStep("preview")}
+                <button onClick={() => setStep("preview")}
                   disabled={signMode === "draw" && !hasSignature}
-                  className="btn-gold flex-1 py-2.5 rounded-lg text-sm font-semibold disabled:opacity-40 disabled:cursor-not-allowed"
-                >
+                  className="btn-gold flex-1 py-2.5 rounded-lg text-sm font-semibold disabled:opacity-40 disabled:cursor-not-allowed">
                   Разместить подпись →
                 </button>
               </div>
@@ -277,32 +255,20 @@ export default function SignPage() {
             <div className="space-y-4 animate-fade-in">
               <div className="text-sm text-slate-400 mb-3">Перетащите подпись на нужное место в документе</div>
               <div className="relative rounded-lg overflow-hidden" style={{ background: '#f5f5f0', minHeight: '500px', border: '1px solid rgba(201,168,76,0.2)' }}>
-                {/* Simulated document */}
                 <div className="p-8 space-y-3" style={{ color: '#1a1a2e' }}>
-                  <div className="text-center font-bold text-xl mb-6" style={{ fontFamily: 'Montserrat' }}>ДОГОВОР №145</div>
-                  <div className="h-3 rounded" style={{ background: '#d0d0c8', width: '100%' }} />
-                  <div className="h-3 rounded" style={{ background: '#d0d0c8', width: '90%' }} />
-                  <div className="h-3 rounded" style={{ background: '#d0d0c8', width: '95%' }} />
-                  <div className="h-3 rounded" style={{ background: '#d0d0c8', width: '75%' }} />
-                  <div className="my-4" />
-                  <div className="h-3 rounded" style={{ background: '#d0d0c8', width: '85%' }} />
-                  <div className="h-3 rounded" style={{ background: '#d0d0c8', width: '92%' }} />
-                  <div className="h-3 rounded" style={{ background: '#d0d0c8', width: '80%' }} />
+                  <div className="text-center font-bold text-xl mb-6" style={{ fontFamily: 'Montserrat' }}>{docName || "ДОКУМЕНТ"}</div>
+                  {[100, 90, 95, 70, 85, 60, 92, 75].map((w, i) => (
+                    <div key={i} className="h-3 rounded" style={{ background: '#d0d0c8', width: `${w}%` }} />
+                  ))}
                 </div>
-
-                {/* Draggable signature */}
-                <div
-                  className="absolute cursor-move select-none"
-                  style={{ left: signX, top: signY }}
+                <div className="absolute cursor-move select-none" style={{ left: signX, top: signY }}
                   onMouseDown={(e) => {
-                    const startX = e.clientX - signX;
-                    const startY = e.clientY - signY;
-                    const onMove = (ev: MouseEvent) => { setSignX(ev.clientX - startX); setSignY(ev.clientY - startY); };
+                    const sx = e.clientX - signX, sy = e.clientY - signY;
+                    const onMove = (ev: MouseEvent) => { setSignX(ev.clientX - sx); setSignY(ev.clientY - sy); };
                     const onUp = () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); };
                     window.addEventListener('mousemove', onMove);
                     window.addEventListener('mouseup', onUp);
-                  }}
-                >
+                  }}>
                   <div className="px-3 py-1 rounded border-2 border-dashed" style={{ borderColor: 'rgba(201,168,76,0.6)', background: 'rgba(201,168,76,0.05)' }}>
                     <div style={{ fontFamily: 'cursive', fontSize: '22px', color: '#1a1a2e' }}>
                       {signatureText || "Подпись"}
@@ -310,13 +276,13 @@ export default function SignPage() {
                   </div>
                 </div>
               </div>
-
               <div className="flex gap-3">
                 <button onClick={() => setStep("sign")} className="px-4 py-2.5 rounded-lg text-sm text-slate-400 hover:text-white transition-colors border" style={{ borderColor: 'rgba(255,255,255,0.1)' }}>
                   ← Назад
                 </button>
-                <button onClick={() => setStep("done")} className="btn-gold flex-1 py-2.5 rounded-lg text-sm font-semibold">
-                  Сохранить и скачать →
+                <button onClick={handleSaveAndDownload} disabled={saving}
+                  className="btn-gold flex-1 py-2.5 rounded-lg text-sm font-semibold flex items-center justify-center gap-2">
+                  {saving ? <><div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />Сохранение...</> : "Сохранить и скачать →"}
                 </button>
               </div>
             </div>
@@ -329,12 +295,16 @@ export default function SignPage() {
                 <Icon name="CheckCircle" size={40} className="text-green-400" />
               </div>
               <h2 className="font-montserrat font-700 text-xl text-white mb-2">Документ подписан!</h2>
-              <p className="text-sm mb-6" style={{ color: '#7A90A8' }}>«{docName}» успешно подписан и готов к скачиванию</p>
+              <p className="text-sm mb-6" style={{ color: '#7A90A8' }}>«{docName}» успешно подписан и сохранён</p>
               <div className="flex gap-3 justify-center">
-                <button className="btn-gold px-6 py-2.5 rounded-lg text-sm font-semibold flex items-center gap-2">
-                  <Icon name="Download" size={16} /> Скачать PDF
-                </button>
-                <button onClick={() => { setStep("upload"); setUploadedFile(null); setDocName(""); setHasSignature(false); }} className="px-6 py-2.5 rounded-lg text-sm text-slate-300 hover:text-white transition-colors border" style={{ borderColor: 'rgba(255,255,255,0.1)' }}>
+                {downloadUrl ? (
+                  <a href={downloadUrl} target="_blank" rel="noreferrer"
+                    className="btn-gold px-6 py-2.5 rounded-lg text-sm font-semibold flex items-center gap-2">
+                    <Icon name="Download" size={16} /> Скачать документ
+                  </a>
+                ) : null}
+                <button onClick={() => { setStep("upload"); setUploadedFile(null); setDocName(""); setHasSignature(false); setDocId(null); setDownloadUrl(null); }}
+                  className="px-6 py-2.5 rounded-lg text-sm text-slate-300 hover:text-white transition-colors border" style={{ borderColor: 'rgba(255,255,255,0.1)' }}>
                   Новый документ
                 </button>
               </div>
@@ -342,12 +312,11 @@ export default function SignPage() {
           )}
         </div>
 
-        {/* Sidebar info */}
+        {/* Sidebar */}
         <div className="col-span-2 space-y-4">
           <div className="glass-card rounded-lg p-4">
             <h3 className="font-montserrat font-600 text-sm text-white mb-3 flex items-center gap-2">
-              <Icon name="Info" size={15} style={{ color: '#C9A84C' }} />
-              Поддерживаемые форматы
+              <Icon name="Info" size={15} style={{ color: '#C9A84C' }} /> Поддерживаемые форматы
             </h3>
             {[
               { ext: "PDF", desc: "Adobe PDF" },
@@ -361,29 +330,16 @@ export default function SignPage() {
               </div>
             ))}
           </div>
-
           <div className="glass-card rounded-lg p-4">
             <h3 className="font-montserrat font-600 text-sm text-white mb-3 flex items-center gap-2">
-              <Icon name="Shield" size={15} style={{ color: '#C9A84C' }} />
-              Безопасность
+              <Icon name="Shield" size={15} style={{ color: '#C9A84C' }} /> Безопасность
             </h3>
             <div className="space-y-2 text-xs" style={{ color: '#7A90A8' }}>
-              <div className="flex items-start gap-2">
-                <Icon name="Check" size={13} className="text-green-400 mt-0.5 flex-shrink-0" />
-                Шифрование 256-bit AES
-              </div>
-              <div className="flex items-start gap-2">
-                <Icon name="Check" size={13} className="text-green-400 mt-0.5 flex-shrink-0" />
-                Криптографическая метка времени
-              </div>
-              <div className="flex items-start gap-2">
-                <Icon name="Check" size={13} className="text-green-400 mt-0.5 flex-shrink-0" />
-                Хэш-верификация документа
-              </div>
-              <div className="flex items-start gap-2">
-                <Icon name="Check" size={13} className="text-green-400 mt-0.5 flex-shrink-0" />
-                Уникальный ID подписания
-              </div>
+              {["Шифрование 256-bit AES", "Криптографическая метка времени", "Хэш-верификация документа", "Уникальный ID подписания"].map(t => (
+                <div key={t} className="flex items-start gap-2">
+                  <Icon name="Check" size={13} className="text-green-400 mt-0.5 flex-shrink-0" /> {t}
+                </div>
+              ))}
             </div>
           </div>
         </div>

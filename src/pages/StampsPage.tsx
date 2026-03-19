@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Icon from "@/components/ui/icon";
+import { stampsApi, Stamp, User } from "@/lib/api";
 
 type StampShape = "round" | "square" | "rect" | "oval";
 type StampTab = "library" | "create";
@@ -69,10 +70,42 @@ function StampPreview({ shape, company, text, inn, color, size = 120 }: {
   );
 }
 
-export default function StampsPage() {
+interface StampsPageProps { user?: User | null; }
+
+export default function StampsPage({ user }: StampsPageProps) {
   const [activeTab, setActiveTab] = useState<StampTab>("library");
   const [selectedStamp, setSelectedStamp] = useState<number | null>(null);
   const [newStamp, setNewStamp] = useState({ shape: "round" as StampShape, company: "ООО «Ваша компания»", text: "УТВЕРЖДЕНО", inn: "ИНН 0000000000", color: "#1a3a6e" });
+  const [dbStamps, setDbStamps] = useState<Stamp[]>([]);
+  const [saving, setSaving] = useState(false);
+  const [saveMsg, setSaveMsg] = useState("");
+
+  useEffect(() => {
+    if (user) {
+      stampsApi.list().then(setDbStamps).catch(() => {});
+    }
+  }, [user]);
+
+  const handleSaveToLibrary = async () => {
+    if (!user) { setSaveMsg("Войдите в аккаунт чтобы сохранить"); setTimeout(() => setSaveMsg(""), 3000); return; }
+    setSaving(true);
+    try {
+      await stampsApi.create({ ...newStamp, name: newStamp.text, is_library: true });
+      const updated = await stampsApi.list();
+      setDbStamps(updated);
+      setSaveMsg("Печать сохранена в библиотеку!");
+    } catch {
+      setSaveMsg("Ошибка сохранения");
+    } finally {
+      setSaving(false);
+      setTimeout(() => setSaveMsg(""), 3000);
+    }
+  };
+
+  const handleDeleteStamp = async (id: number) => {
+    await stampsApi.delete(id).catch(() => {});
+    setDbStamps(prev => prev.filter(s => s.id !== id));
+  };
 
   return (
     <div className="p-6">
@@ -102,6 +135,34 @@ export default function StampsPage() {
       {/* Library */}
       {activeTab === "library" && (
         <div className="animate-fade-in">
+          {dbStamps.length > 0 && (
+            <div className="mb-4">
+              <div className="text-xs font-medium uppercase tracking-widest mb-3" style={{ color: '#C9A84C' }}>Мои печати</div>
+              <div className="grid grid-cols-3 gap-4 mb-6">
+                {dbStamps.map((stamp) => (
+                  <div key={stamp.id}
+                    onClick={() => setSelectedStamp(selectedStamp === stamp.id ? null : stamp.id)}
+                    className="glass-card-hover rounded-lg p-5 text-center cursor-pointer transition-all"
+                    style={selectedStamp === stamp.id ? { borderColor: 'rgba(201,168,76,0.6)', background: 'rgba(201,168,76,0.05)' } : {}}>
+                    <div className="flex justify-center mb-4" style={{ opacity: 0.75 }}>
+                      <StampPreview shape={stamp.shape as StampShape} company={stamp.company || ""} text={stamp.text || ""} inn={stamp.inn || ""} color={stamp.color || "#1a3a6e"} size={100} />
+                    </div>
+                    <div className="text-sm font-medium text-white mb-0.5">{stamp.text}</div>
+                    {stamp.company && <div className="text-xs" style={{ color: '#7A90A8' }}>{stamp.company}</div>}
+                    <div className="mt-3 flex gap-2">
+                      <button className="flex-1 py-1.5 rounded text-xs btn-gold shine-effect">Применить</button>
+                      <button onClick={(e) => { e.stopPropagation(); handleDeleteStamp(stamp.id); }}
+                        className="px-3 py-1.5 rounded text-xs border text-slate-400 hover:text-red-400 transition-colors" style={{ borderColor: 'rgba(255,255,255,0.1)' }}>
+                        <Icon name="Trash2" size={12} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="text-xs font-medium uppercase tracking-widest mb-3" style={{ color: '#7A90A8' }}>Шаблоны библиотеки</div>
           <div className="grid grid-cols-3 gap-4">
             {stampLibrary.map((stamp) => (
               <div
@@ -113,14 +174,10 @@ export default function StampsPage() {
                 <div className="flex justify-center mb-4" style={{ opacity: 0.75 }}>
                   <StampPreview {...stamp} size={100} />
                 </div>
-                <div className="text-sm font-medium text-white mb-0.5">
-                  {stamp.text}
-                </div>
+                <div className="text-sm font-medium text-white mb-0.5">{stamp.text}</div>
                 {stamp.company && <div className="text-xs" style={{ color: '#7A90A8' }}>{stamp.company}</div>}
                 <div className="mt-3 flex gap-2">
-                  <button className="flex-1 py-1.5 rounded text-xs btn-gold shine-effect">
-                    Применить
-                  </button>
+                  <button className="flex-1 py-1.5 rounded text-xs btn-gold shine-effect">Применить</button>
                   <button className="px-3 py-1.5 rounded text-xs border text-slate-400 hover:text-white transition-colors" style={{ borderColor: 'rgba(255,255,255,0.1)' }}>
                     <Icon name="Download" size={12} />
                   </button>
@@ -209,10 +266,12 @@ export default function StampsPage() {
               <button className="btn-gold flex-1 py-2.5 rounded-lg text-sm font-semibold flex items-center justify-center gap-2">
                 <Icon name="Download" size={16} /> Скачать PNG
               </button>
-              <button className="px-5 py-2.5 rounded-lg text-sm text-slate-300 hover:text-white transition-colors border" style={{ borderColor: 'rgba(255,255,255,0.1)' }}>
-                Сохранить в библиотеку
+              <button onClick={handleSaveToLibrary} disabled={saving}
+                className="px-5 py-2.5 rounded-lg text-sm text-slate-300 hover:text-white transition-colors border disabled:opacity-50" style={{ borderColor: 'rgba(255,255,255,0.1)' }}>
+                {saving ? "Сохранение..." : "Сохранить в библиотеку"}
               </button>
             </div>
+            {saveMsg && <div className="text-xs mt-2 text-center" style={{ color: saveMsg.includes("Ошибка") ? '#f87171' : '#4ade80' }}>{saveMsg}</div>}
           </div>
 
           {/* Preview */}

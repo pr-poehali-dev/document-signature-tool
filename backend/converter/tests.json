@@ -1,0 +1,19 @@
+{
+  "tests": [
+    {
+      "name": "OPTIONS preflight",
+      "method": "OPTIONS",
+      "path": "/",
+      "expectedStatus": 200
+    },
+    {
+      "name": "POST without file returns 400",
+      "method": "POST",
+      "path": "/",
+      "body": {"from_fmt": "PDF", "to_fmt": "DOCX"},
+      "expectedStatus": 400,
+      "expectedBody": {"error": "Файл не передан"},
+      "bodyMatcher": "partial"
+    }
+  ]
+}

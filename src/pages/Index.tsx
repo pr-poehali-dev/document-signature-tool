@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Layout from "@/components/Layout";
 import AuthPage from "@/pages/AuthPage";
 import HomePage from "@/pages/HomePage";
@@ -9,32 +9,52 @@ import TemplatesPage from "@/pages/TemplatesPage";
 import HistoryPage from "@/pages/HistoryPage";
 import CabinetPage from "@/pages/CabinetPage";
 import AdminPage from "@/pages/AdminPage";
+import { authApi, User } from "@/lib/api";
 
 type Page = "home" | "sign" | "stamps" | "converter" | "cabinet" | "templates" | "history" | "admin" | "login" | "register";
-
-interface User {
-  name: string;
-  email: string;
-  role: "user" | "admin";
-}
 
 export default function Index() {
   const [page, setPage] = useState<Page>("login");
   const [user, setUser] = useState<User | null>(null);
+  const [authChecked, setAuthChecked] = useState(false);
 
-  const handleAuth = (name: string, email: string, role: "user" | "admin") => {
-    setUser({ name, email, role });
+  // Восстанавливаем сессию при загрузке
+  useEffect(() => {
+    authApi.me().then((u) => {
+      if (u) {
+        setUser(u);
+        setPage("home");
+      }
+      setAuthChecked(true);
+    });
+  }, []);
+
+  const handleAuth = (u: User) => {
+    setUser(u);
     setPage("home");
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    await authApi.logout();
     setUser(null);
     setPage("login");
   };
 
-  const handleNavigate = (p: Page) => {
-    setPage(p);
-  };
+  const handleNavigate = (p: Page) => setPage(p);
+
+  // Пока проверяем сессию — показываем заглушку
+  if (!authChecked) {
+    return (
+      <div className="min-h-screen flex items-center justify-center" style={{ background: '#060F1E' }}>
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-12 h-12 rounded-xl flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #C9A84C, #A07830)' }}>
+            <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+          </div>
+          <span className="text-sm font-ibm" style={{ color: '#7A90A8' }}>Загрузка...</span>
+        </div>
+      </div>
+    );
+  }
 
   if (page === "login" || page === "register") {
     return (
@@ -48,15 +68,15 @@ export default function Index() {
 
   const renderPage = () => {
     switch (page) {
-      case "home": return <HomePage onNavigate={handleNavigate} userName={user?.name} />;
-      case "sign": return <SignPage />;
-      case "stamps": return <StampsPage />;
+      case "home":      return <HomePage onNavigate={handleNavigate} user={user} />;
+      case "sign":      return <SignPage user={user} />;
+      case "stamps":    return <StampsPage user={user} />;
       case "converter": return <ConverterPage />;
       case "templates": return <TemplatesPage />;
-      case "history": return <HistoryPage />;
-      case "cabinet": return <CabinetPage userName={user?.name} userEmail={user?.email} />;
-      case "admin": return user?.role === "admin" ? <AdminPage /> : <HomePage onNavigate={handleNavigate} userName={user?.name} />;
-      default: return <HomePage onNavigate={handleNavigate} userName={user?.name} />;
+      case "history":   return <HistoryPage />;
+      case "cabinet":   return <CabinetPage user={user} onUserUpdate={setUser} />;
+      case "admin":     return user?.role === "admin" ? <AdminPage /> : <HomePage onNavigate={handleNavigate} user={user} />;
+      default:          return <HomePage onNavigate={handleNavigate} user={user} />;
     }
   };
 
