@@ -1,11 +1,7 @@
-import func2url from '../../backend/func2url.json';
-
-const URLS = func2url as Record<string, string>;
-
-const AUTH_URL = URLS.auth;
-const DOCS_URL = URLS.documents;
-const STAMPS_URL = URLS.stamps;
-const CONVERTER_URL = URLS.converter;
+const AUTH_URL = 'https://functions.poehali.dev/9a83e766-8697-4df4-8847-16022a2240f8';
+const DOCS_URL = 'https://functions.poehali.dev/9788d9e4-6a5d-405e-a299-7d50e71734d8';
+const STAMPS_URL = 'https://functions.poehali.dev/879071c6-90cc-4119-a540-f35b4f6b85ea';
+const CONVERTER_URL = 'https://functions.poehali.dev/41ae3bf6-8f34-4b8c-9057-8d2e5e8595e8';
 
 // ─── Token storage ───────────────────────────────────────────────
 export const getToken = (): string => localStorage.getItem('ds_token') || '';
