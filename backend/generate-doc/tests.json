@@ -1,0 +1,39 @@
+{
+  "tests": [
+    {
+      "name": "OPTIONS preflight",
+      "method": "OPTIONS",
+      "path": "/",
+      "expectedStatus": 200
+    },
+    {
+      "name": "Missing template_id",
+      "method": "POST",
+      "path": "/",
+      "body": {},
+      "expectedStatus": 400,
+      "expectedBody": {"error": "string"},
+      "bodyMatcher": "partial"
+    },
+    {
+      "name": "Generate invoice",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "template_id": 5,
+        "fields": {
+          "invoice_num": "1",
+          "seller": "ООО Тест",
+          "buyer": "ИП Иванов",
+          "item_name": "Услуги",
+          "qty": "1",
+          "price": "10000",
+          "total": "10000"
+        }
+      },
+      "expectedStatus": 200,
+      "expectedBody": {"file_data": "string", "file_name": "string"},
+      "bodyMatcher": "partial"
+    }
+  ]
+}
